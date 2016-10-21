@@ -92,41 +92,6 @@ function Update-Package {
         [string] $Result
     )
 
-    function Load-NuspecFile() {
-        $nu = New-Object xml
-        $nu.psbase.PreserveWhitespace = $true
-        $nu.Load($nuspecFile)
-        $nu
-    }
-
-    function check_url() {
-        "URL check" | result
-        $Latest.Keys | ? {$_ -like 'url*' } | % {
-            $url = $Latest[ $_ ]
-            $res = $false
-            try
-            {
-                $response = request $url $Timeout
-                if ($response.ContentType -like '*text/html*') { $err="Latest $($package.Name) URL content type is text/html" }
-                else {
-                    $res = $true
-                    "  $url" | result
-                }
-            }
-            catch { $err = $_ }
-
-            if (!$res) { throw "Can't validate latest $($package.Name) URL (disable using `$NoCheckUrl`): '$url' `n$err" }
-        }
-    }
-
-    function check_version() {
-        $re = '^(\d{1,16})\.(\d{1,16})\.*(\d{1,16})*\.*(\d{1,16})*(-[^.-]+)*$'
-        if ($Latest.Version -notmatch $re) { throw "Latest $($package.Name) version doesn't match the pattern '$re': '$($Latest.Version)'" }
-        for($i=1; $i -le 3; $i++) { 
-            if ([int32]::MaxValue -lt [int64]$Matches[$i]) { throw "$Latest $($package.Name) version component is too big: $($Matches[$i])" }
-        }
-    }
-
     function get_checksum()
     {
         function invoke_installer() {
@@ -208,75 +173,6 @@ function Update-Package {
         invoke_installer
     }
 
-    function set_choco_fix() {
-        $script:is_forced = $true
-
-        $date_format = 'yyyyMMdd'
-        $d = (get-date).ToString($date_format)
-        $v = [version]($package.NuspecVersion -replace '-.+')
-        $rev = $v.Revision.ToString()
-        try { $revdate = [DateTime]::ParseExact($rev, $date_format,[System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None) } catch {}
-        if (($rev -ne -1) -and !$revdate) { return }
-
-        $build = if ($v.Build -eq -1) {0} else {$v.Build}
-        $Latest.Version = $package.RemoteVersion = '{0}.{1}.{2}.{3}' -f $v.Major, $v.Minor, $build, $d
-    }
-
-    function update_files( [switch]$SkipNuspecFile )
-    {
-        'Updating files' | result
-        '  $Latest data:' | result;  ($global:Latest.keys | sort | % { "    {0,-15} ({1})    {2}" -f $_, $global:Latest[$_].GetType().Name, $global:Latest[$_] }) | result; '' | result
-
-        if (!$SkipNuspecFile) {
-            "  $(Split-Path $nuspecFile -Leaf)" | result
-
-            "    setting id:  $($global:Latest.PackageName)" | result
-            $nu.package.metadata.id = $package.Name = $global:Latest.PackageName.ToString()
-
-            $msg ="updating version: {0} -> {1}" -f $package.NuspecVersion, $package.RemoteVersion
-            if ($script:is_forced) {
-                if ($package.RemoteVersion -eq $package.NuspecVersion) {
-                    $msg = "    version not changed as it already uses 'revision': {0}" -f $package.NuspecVersion
-                } else {
-                    $msg = "    using Chocolatey fix notation: {0} -> {1}" -f $package.NuspecVersion, $package.RemoteVersion
-                }
-            }
-            $msg | result
-
-            $nu.package.metadata.version = $package.RemoteVersion.ToString()
-            $nu.Save($nuspecFile)
-        }
-
-        $sr = au_SearchReplace
-        $sr.Keys | % {
-            $fileName = $_
-            "  $fileName" | result
-
-            $fileContent = gc $fileName -Encoding UTF8
-            $sr[ $fileName ].GetEnumerator() | % {
-                ('    {0} = {1} ' -f $_.name, $_.value) | result
-                if (!($fileContent -match $_.name)) { throw "Search pattern not found: '$($_.name)'" }
-                $fileContent = $fileContent -replace $_.name, $_.value
-            }
-
-            $Utf8NoBomEncoding = New-Object System.Text.UTF8Encoding($False)
-            [System.IO.File]::WriteAllLines((gi $fileName).FullName, $fileContent, $Utf8NoBomEncoding)
-        }
-    }
-
-    function is_updated() {
-        $remote_l = $package.RemoteVersion -replace '-.+'
-        $nuspec_l = $package.NuspecVersion -replace '-.+'
-        $remote_r = $package.RemoteVersion -replace '.+(?=(-.+)*)'
-        $nuspec_r = $package.NuspecVersion -replace '.+(?=(-.+)*)'
-
-        if ([version]$remote_l -eq [version] $nuspec_l) {
-            if (!$remote_r -and $nuspec_r) { return $true }
-            if ($remote_r -and !$nuspec_r) { return $false }
-            return ($remote_r -gt $nuspec_r)
-        }
-        [version]$remote_l -gt [version] $nuspec_l
-    }
 
     function result() {
         if ($global:Silent) { return }
@@ -302,20 +198,15 @@ function Update-Package {
         }
     }
 
-    $package = New-AUPackage $pwd
+    $package = [AUPackage]:new( $pwd )
     if ($Result) { sv -Scope Global -Name $Result -Value $package }
 
-    $global:Latest = @{PackageName = $package.Name}
-
-    $nuspecFile = gi "$($package.Name).nuspec" -ea ignore
-    if (!$nuspecFile) { throw 'No nuspec file found in the current directory' }
-    $nu = Load-NuspecFile
-    $global:Latest.NuspecVersion = $package.NuspecVersion = $nu.package.metadata.version
-    if (!$package.NuspecVersion) {throw "Unable to get nuspec version"}
-
     $module = $MyInvocation.MyCommand.ScriptBlock.Module
+
     "{0} - checking updates using {1} version {2}" -f $package.Name, $module.Name, $module.Version | result
+
     try {
+        $global:Latest = [AUPackage]::InitLatest()
         $res = au_GetLatest | select -Last 1
         if ($res -eq $null) { throw 'au_GetLatest returned nothing' }
 
@@ -328,15 +219,20 @@ function Update-Package {
         throw "au_GetLatest failed`n$_"
     }
 
-    check_version
-    $package.RemoteVersion = $Latest.Version
+    [AUPackage]::SetRemoteVersion( $Latest.Version )
+    $package.Name = $Latest.PackageName
 
-    if (!$NoCheckUrl) { check_url }
+    if (!$NoCheckUrl) {
+        "URL check" | result
+        $ulrs = $Latest.Keys | ? {$_ -like 'url*' }
+        foreach ($url in $urls) { Test-URl $url $Timeout; "  $url" | result }
+    }
 
     "nuspec version: " + $package.NuspecVersion | result
     "remote version: " + $package.RemoteVersion | result
 
-    if (is_updated) {
+    $package.Forced = $Force -and !$package.IsUpdated()
+    if ( $package.IsUpdated() ) {
         if (!($NoCheckChocoVersion -or $Force)) {
             $choco_url = "https://chocolatey.org/packages/{0}/{1}" -f $package.Name, $package.RemoteVersion
             try {
@@ -350,17 +246,20 @@ function Update-Package {
             'No new version found' | result
             return $package
         }
-        else { 'No new version found, but update is forced' | result; set_choco_fix }
-
+        else {
+            $package.SetRemoteVersionChocoFix()
+            $Latest.Version = $package.RemoteVersion
+            'No new version found, but update is forced' | result
+        }
     }
 
     'New version is available' | result
 
     if ($ChecksumFor -ne 'none') { get_checksum } else { 'Automatic checksum skipped' | result }
 
-    if (Test-Path Function:\au_BeforeUpdate) { 'Running au_BeforeUpdate' | result; au_BeforeUpdate | result }
-    update_files
-    if (Test-Path Function:\au_AfterUpdate) { 'Running au_AfterUpdate' | result; au_AfterUpdate | result }
+    if (Test-Path Function:\au_BeforeUpdate) { & {'Running au_BeforeUpdate'; au_BeforeUpdate } | result }
+    $package.UpdateFiles | result
+    if (Test-Path Function:\au_AfterUpdate) { & { 'Running au_AfterUpdate'; au_AfterUpdate } | result }
 
     choco pack --limit-output | result
     'Package updated' | result
