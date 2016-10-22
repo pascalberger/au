@@ -51,7 +51,7 @@ class AUPackage {
 
         $m = "  updating version: {0} -> {1}" -f $this.NuspecVersion, $this.RemoteVersion
         if ($this.Forced) {
-            $m = ($this.RemoteVersion -eq $this.NuspecVersion) {
+            $m = if ($this.RemoteVersion -eq $this.NuspecVersion) {
                     "  version not changed as it already uses 'revision': {0}" -f $this.NuspecVersion
             } else {
                     "    using Chocolatey fix notation: {0} -> {1}" -f $this.NuspecVersion, $this.RemoteVersion
