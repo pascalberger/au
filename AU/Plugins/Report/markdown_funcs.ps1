@@ -15,7 +15,7 @@ function md_code($Text) {
 }
 
 function md_table($result, $Columns, $MaxErrorLength=150) {
-    if (!$Columns) { $Columns = 'Name', 'Updated', 'Pushed', 'RemoteVersion', 'NuspecVersion', 'Error' }
+    if (!$Columns) { $Columns = 'Name', 'Updated', 'Pushed', 'RemoteVersion', 'NuspecVersion', 'Error', 'Status' }
     $res = '|' + ($Columns -join '|') + "|`r`n"
     $res += ((1..$Columns.Length | % { '|---' }) -join '') + "|`r`n"
 
@@ -43,6 +43,10 @@ function md_table($result, $Columns, $MaxErrorLength=150) {
                             "[{0}](#{1})" -f $err, $_.Name.ToLower()
                         }
                     }
+                },
+                @{
+                    N='Status'
+                    E={ [AUPackage]::GetCommunityStatus($_) }
                 }
 
         $res += ((1..$Columns.Length | % { $col = $Columns[$_-1]; '|' + $o.$col }) -join '') + "|`r`n"

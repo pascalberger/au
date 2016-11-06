@@ -29,4 +29,19 @@ class AUPackage {
         $nu.Load($NuspecPath)
         return $nu
     }
+
+    static [string] GetCommunityStatus($Package) {
+        $package_url = 'https://chocolatey.org/packages/{0}/{1}' -f $Package.Name, $Package.Version
+        $page = Invoke-WebRequest $package_url
+        if (!$page) { return 'err page' }
+
+        $tr = $page.AllElements | ? class -like '*versiontablerow*'
+        if (!$tr) { return 'err vtable' }
+
+        $version_row = $tr -match ("{0} {1}" -f $Package.NuspecXml.package.metadata.title, $Package.Version)
+        if (!$version_row) { return 'err vrow' }
+
+        $status = $version_row.innerText -split ' ' | select -last 1
+        return $status
+    }
 }

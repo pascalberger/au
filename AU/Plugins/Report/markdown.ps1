@@ -43,7 +43,7 @@ else {
 ""
 md_fix_newline $Info.stats
 
-$columns = 'Icon', 'Name', 'Updated', 'Pushed', 'RemoteVersion', 'NuspecVersion'
+$columns = 'Icon', 'Name', 'Updated', 'Pushed', 'RemoteVersion', 'NuspecVersion', 'Status'
 if ($NoIcons) { $columns = $columns[1.10] }
 if ($Info.pushed) {
     md_title Pushed
